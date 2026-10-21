@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: kwai-insights
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /_stcore/health
