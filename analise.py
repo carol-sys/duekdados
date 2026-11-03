@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 
 DIAS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
-FAIXAS_HORA = ["madrugada", "manhã", "tarde", "noite"]
 
 
 # =================================================================== texto
@@ -142,7 +141,7 @@ def caracteristicas(texto: str) -> dict:
 def tratar(linhas: list[dict]) -> pd.DataFrame:
     """Lista bruta da coleta → tabela tratada e rotulada (uma linha por vídeo)."""
     df = pd.DataFrame(linhas)
-    for c in ("curtidas", "comentarios", "duracao_segundos", "hora_publicacao", "seguidores_perfil"):
+    for c in ("curtidas", "comentarios", "duracao_segundos", "seguidores_perfil"):
         df[c] = pd.to_numeric(df.get(c), errors="coerce")
     for c in ("legenda", "data_publicacao", "fonte_data"):
         df[c] = df.get(c, pd.Series("", index=df.index)).fillna("").astype(str)
@@ -167,7 +166,6 @@ def tratar(linhas: list[dict]) -> pd.DataFrame:
 
     df["interacoes"] = df["curtidas"].fillna(0) + df["comentarios"].fillna(0)
     df["dia_semana"] = df["data"].dt.dayofweek.map(lambda d: DIAS[int(d)] if pd.notna(d) else "")
-    df["faixa_horario"] = pd.cut(df["hora_publicacao"].where(df["data_ok"]), [-1, 5, 11, 17, 23], labels=FAIXAS_HORA).astype(str).replace("nan", "")
     df["periodo_mes"] = pd.cut(df["data"].dt.day, [0, 10, 20, 31], labels=["início (1–10)", "meio (11–20)", "fim (21–31)"]).astype(str).replace("nan", "")
     df["mes"] = df["data"].dt.strftime("%Y-%m").fillna("")
     df["faixa_duracao"] = pd.cut(df["duracao_segundos"], [0, 15, 30, 60, 180, 1e9],
@@ -200,7 +198,7 @@ def tratar(linhas: list[dict]) -> pd.DataFrame:
     return df
 
 
-COLUNAS_CSV = ["conta", "posicao", "data_publicacao", "hora_publicacao", "dia_semana", "faixa_horario", "periodo_mes",
+COLUNAS_CSV = ["conta", "posicao", "data_publicacao", "dia_semana", "periodo_mes",
                "mes", "duracao_segundos", "faixa_duracao", "curtidas", "comentarios", "interacoes", "indice",
                "fora_da_curva", "coment_por_100_curtidas", "eng_por_mil_seguidores", "seguidores_perfil",
                "legenda", "legenda_propria", "gancho", "tom", "categoria_principal",
@@ -266,7 +264,7 @@ def por_grupo(d: pd.DataFrame, col: str, ordem: list[str] | None = None) -> pd.D
 def recomendacoes_quando(d: pd.DataFrame) -> list[str]:
     """Frases do tipo 'posta mais em X, mas engaja mais em Y'."""
     frases = []
-    for col, rotulo, ordem in (("dia_semana", "dia", DIAS), ("faixa_horario", "horário", FAIXAS_HORA),
+    for col, rotulo, ordem in (("dia_semana", "dia", DIAS),
                                ("periodo_mes", "período do mês", None)):
         g = por_grupo(d, col, ordem)
         if len(g) < 2:

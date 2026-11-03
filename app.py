@@ -257,22 +257,67 @@ def obter(perfil: str, max_videos: int, forcar: bool = False) -> tuple[pd.DataFr
 
 
 # ============================================================== gráficos
-def grafico_linha_tempo(df: pd.DataFrame, cores: dict) -> alt.Chart:
-    v = df[df["valido"] & df["data_ok"]].sort_values("data").copy()
-    v["mediana_movel"] = v.groupby("conta")["interacoes"].transform(lambda s: s.rolling(7, min_periods=1).median())
-    v["leg_curta"] = v["legenda"].str.slice(0, 80)
-    escala = alt.Scale(domain=list(cores), range=list(cores.values()))
-    base = alt.Chart(v).encode(x=alt.X("data:T", title=None, axis=alt.Axis(format="%d/%m/%y")))
-    pontos = base.mark_circle(size=38, opacity=.35).encode(
-        y=alt.Y("interacoes:Q", title="interações (escala log)", scale=alt.Scale(type="symlog")),
-        color=alt.Color("conta:N", scale=escala, title=None,
-                        legend=alt.Legend() if len(cores) > 1 else None),
-        tooltip=[alt.Tooltip("conta:N"), alt.Tooltip("data:T", format="%d/%m/%Y"),
-                 alt.Tooltip("interacoes:Q", format=",.0f"), alt.Tooltip("leg_curta:N", title="legenda")],
+NUM_BR = "replace(format(datum.value, ',.0f'), regexp(',', 'g'), '.')"   # 16000 -> 16.000
+
+
+def grafico_videos(df: pd.DataFrame) -> alt.Chart:
+    """Uma barra por vídeo, do mais antigo ao mais recente. Destaques em laranja."""
+    v = df[df["valido"] & df["data_ok"]].sort_values(["data", "posicao"], ascending=[True, False]).copy()
+    v["ordem"] = range(len(v))
+    tipico = float(v["interacoes"].median())
+    v["tipo"] = np.where(v["indice"] >= 2, "Destaque: 2× ou mais que o normal", "Vídeo comum")
+    v["quando"] = v["data"].dt.strftime("%d/%m/%Y")
+    v["quanto"] = v["interacoes"].map(lambda x: fmt(x))
+    v["texto"] = v["legenda"].where(v["legenda"].ne(""), "(sem legenda)").str.slice(0, 90)
+    barras = alt.Chart(v).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+        x=alt.X("ordem:O", axis=None, scale=alt.Scale(paddingInner=0.25)),
+        y=alt.Y("interacoes:Q", title="Interações (curtidas + comentários)",
+                axis=alt.Axis(labelExpr=NUM_BR, tickCount=4)),
+        color=alt.Color("tipo:N", title=None, legend=None,
+                        scale=alt.Scale(domain=["Vídeo comum", "Destaque: 2× ou mais que o normal"],
+                                        range=["#A9BBE3", C.LARANJA_VITORIA])),
+        tooltip=[alt.Tooltip("quando:N", title="Publicado em"), alt.Tooltip("quanto:N", title="Interações"),
+                 alt.Tooltip("texto:N", title="Legenda")],
         href="link:N")
-    linha = base.mark_line(strokeWidth=2.6, interpolate="monotone").encode(
-        y="mediana_movel:Q", color=alt.Color("conta:N", scale=escala, legend=None))
-    return (pontos + linha).properties(height=300)
+    linha = alt.Chart(pd.DataFrame({"y": [tipico]})).mark_rule(strokeDash=[6, 4], color=C.GRAFITE, size=1.5).encode(y="y:Q")
+    return (barras + linha).properties(height=300)
+
+
+def legenda_videos(df: pd.DataFrame) -> None:
+    tipico = df.loc[df["valido"], "interacoes"].median()
+    item = "display:inline-flex;align-items:center;gap:8px;margin-right:22px"
+    st.markdown(f"""<div style='font-size:.9rem;color:{C.GRAFITE};margin:2px 0 8px'>
+<span style='{item}'><span style='width:12px;height:12px;border-radius:3px;background:#A9BBE3'></span>Vídeo comum</span>
+<span style='{item}'><span style='width:12px;height:12px;border-radius:3px;background:{C.LARANJA_VITORIA}'></span>Destaque: 2× ou mais que o normal</span>
+<span style='{item}'><span style='width:22px;border-top:2px dashed {C.GRAFITE}'></span>Vídeo típico: <b>{fmt(tipico)}</b> interações</span>
+</div>""", unsafe_allow_html=True)
+
+
+def grafico_semanas(df: pd.DataFrame, cores: dict) -> alt.Chart:
+    """Vídeo típico (mediana) de cada semana — ou de cada dia, se o período for curto — por conta."""
+    v = df[df["valido"] & df["data_ok"]].copy()
+    dias = (v["data"].max() - v["data"].min()).days
+    por_semana = dias >= 21
+    v["periodo"] = v["data"].dt.to_period("W-SUN").dt.start_time if por_semana else v["data"].dt.normalize()
+    g = v.groupby(["conta", "periodo"]).agg(tipico=("interacoes", "median"), videos=("id_video", "count")).reset_index()
+    g["quando"] = ("Semana de " if por_semana else "") + g["periodo"].dt.strftime("%d/%m/%Y")
+    g["quanto"] = g["tipico"].map(lambda x: fmt(x))
+    escala = alt.Scale(domain=list(cores), range=list(cores.values()))
+    base = alt.Chart(g).encode(
+        x=alt.X("periodo:T", title=None, axis=alt.Axis(format="%d/%m", labelAngle=0, tickCount=8)),
+        y=alt.Y("tipico:Q", title="Interações do vídeo típico", axis=alt.Axis(labelExpr=NUM_BR, tickCount=4)),
+        color=alt.Color("conta:N", scale=escala, title=None, legend=alt.Legend(orient="top")),
+        tooltip=[alt.Tooltip("conta:N", title="Conta"), alt.Tooltip("quando:N", title="Período"),
+                 alt.Tooltip("quanto:N", title="Vídeo típico"), alt.Tooltip("videos:Q", title="Vídeos postados")])
+    return (base.mark_line(strokeWidth=3, interpolate="monotone") + base.mark_circle(size=70, opacity=1)).properties(height=300)
+
+
+def faixa_datas(df: pd.DataFrame) -> None:
+    v = df[df["valido"] & df["data_ok"]]
+    if len(v):
+        st.markdown(f"<div style='display:flex;justify-content:space-between;color:{C.CINZA_DUE};font-size:.85rem;"
+                    f"margin:-6px 4px 10px'><span>← mais antigo: {data_br(v['data'].min())}</span>"
+                    f"<span>mais recente: {data_br(v['data'].max())} →</span></div>", unsafe_allow_html=True)
 
 
 def grafico_grupo(g: pd.DataFrame, col: str, ordem, cores: dict, titulo_: str) -> alt.Chart:
@@ -300,7 +345,8 @@ def grafico_efeitos(ef: pd.DataFrame, cores: dict) -> alt.Chart:
     cor = (alt.Color("conta:N", scale=alt.Scale(domain=list(cores), range=list(cores.values())), title=None)
            if multi else alt.Color("sinal:N", scale=alt.Scale(domain=["ajuda", "atrapalha"],
                                                               range=[C.AZUL_DUE_MEDIO, C.ROSA_VITORIA]), legend=None))
-    enc = dict(y=alt.Y("característica:N", sort=alt.EncodingSortField("efeito", order="descending"), title=None),
+    enc = dict(y=alt.Y("característica:N", sort=alt.EncodingSortField("efeito", order="descending"), title=None,
+                     axis=alt.Axis(labelLimit=340, labelOverlap=False, labelPadding=8)),
                x=alt.X("efeito_pct:Q", title="efeito no engajamento (%), vídeos com vs. sem"),
                color=cor, opacity=alt.condition("datum['vídeos com'] >= 5", alt.value(1), alt.value(.4)),
                tooltip=["conta", "característica", alt.Tooltip("vídeos com:Q"),
@@ -308,13 +354,13 @@ def grafico_efeitos(ef: pd.DataFrame, cores: dict) -> alt.Chart:
     if multi:
         enc["yOffset"] = "conta:N"
     return (alt.Chart(e).mark_bar(cornerRadiusEnd=5).encode(**enc)
-            .properties(height=max(260, 24 * e["característica"].nunique() * (2 if multi else 1))))
+            .properties(height=max(280, 28 * e["característica"].nunique() * (2 if multi else 1))))
 
 
 # ======================================================== blocos de tela
 def melhores_momentos(df: pd.DataFrame) -> dict:
     out = {}
-    for col, ordem in (("dia_semana", A.DIAS), ("faixa_horario", A.FAIXAS_HORA),
+    for col, ordem in (("dia_semana", A.DIAS),
                        ("periodo_mes", ["início (1–10)", "meio (11–20)", "fim (21–31)"])):
         g = A.por_grupo(df, col, ordem)
         if g.empty:
@@ -361,7 +407,7 @@ def cartao_resumo(r: dict) -> None:
 
 def cartao_momentos(df: pd.DataFrame, r: dict) -> None:
     with st.container(key=f"card_momentos_{r['conta']}"):
-        titulo("Quando postar", "Calculado sobre o vídeo típico de cada dia, horário e período")
+        titulo("Quando postar", "Calculado sobre o vídeo típico de cada dia da semana e período do mês")
         frases = A.recomendacoes_quando(df)
         for f in frases:
             st.markdown(f"<div class='frase'>{_md_para_html(f)}</div>", unsafe_allow_html=True)
@@ -369,7 +415,7 @@ def cartao_momentos(df: pd.DataFrame, r: dict) -> None:
         st.markdown(f"""
 <div class='ladrilhos'>
   <div class='ladrilho'><div class='r'>Melhor dia</div><div class='v'>{esc(m['dia_semana'])}</div></div>
-  <div class='ladrilho'><div class='r'>Melhor horário</div><div class='v'>{esc(m['faixa_horario'])}</div></div>
+  <div class='ladrilho'><div class='r'>Posts por semana</div><div class='v'>{fmt(r['posts_semana'], 1)}</div></div>
   <div class='ladrilho'><div class='r'>Melhor período do mês</div><div class='v'>{esc(m['periodo_mes'])}</div></div>
   <div class='ladrilho'><div class='r'>Intervalo entre posts</div><div class='v'>{fmt(r['intervalo_mediano'], 1)} dia(s)</div></div>
 </div>""", unsafe_allow_html=True)
@@ -410,10 +456,9 @@ def tabela_top(df: pd.DataFrame, n: int = 10) -> None:
 
 
 def bloco_quando(df: pd.DataFrame, cores: dict) -> None:
-    cols = st.columns(3)
+    cols = st.columns(2, gap="large")
     for coluna, (col, ordem, nome) in zip(cols, (
             ("dia_semana", A.DIAS, "Dia da semana"),
-            ("faixa_horario", A.FAIXAS_HORA, "Horário"),
             ("periodo_mes", ["início (1–10)", "meio (11–20)", "fim (21–31)"], "Período do mês"))):
         g = A.por_grupo(df, col, ordem)
         with coluna:
@@ -538,9 +583,13 @@ def pagina_perfil(max_videos: int) -> None:
 
         abas = st.tabs(["Desempenho", "Quando postar", "Legendas", "Dados e CSV"])
         with abas[0], st.container(key="card_desempenho"):
-            titulo("Interações ao longo do tempo", "Cada ponto é um vídeo (clique para abrir); a linha é a mediana de 7 vídeos")
+            titulo("Como cada vídeo se saiu",
+                   "Cada barra é um vídeo, do mais antigo ao mais recente. Barras laranja engajaram o dobro do normal "
+                   "ou mais. Passe o mouse para ver os detalhes e clique para abrir o vídeo.")
             if df["data_ok"].sum() >= 2:
-                st.altair_chart(grafico_linha_tempo(df, {r["conta"]: C.COR_A}), width="stretch")
+                legenda_videos(df)
+                st.altair_chart(grafico_videos(df), width="stretch")
+                faixa_datas(df)
             titulo("Top 10 vídeos")
             tabela_top(df)
         with abas[1], st.container(key="card_quando"):
@@ -622,8 +671,9 @@ def pagina_competicao(max_videos: int) -> None:
 
     abas = st.tabs(["Desempenho", "Quando postar", "Legendas", "Top vídeos", "Dados e CSV"])
     with abas[0], st.container(key="card_c_desemp"):
-        titulo("Interações ao longo do tempo", "Cada ponto é um vídeo; a linha é a mediana de 7 vídeos")
-        st.altair_chart(grafico_linha_tempo(df, cores), width="stretch")
+        titulo("Como cada conta foi ao longo do tempo",
+               "Quanto o vídeo típico de cada conta engajou em cada período. Passe o mouse para ver os números.")
+        st.altair_chart(grafico_semanas(df, cores), width="stretch")
     with abas[1]:
         a, b = st.columns(2, gap="medium")
         for col, d, r, k in ((a, da, ra, "a"), (b, db, rb, "b")):
@@ -671,7 +721,7 @@ def pagina_como_funciona() -> None:
         titulo("Como os dados são coletados")
         st.markdown("""
 1. Um navegador invisível abre o perfil e rola a grade de vídeos para pegar os links.
-2. A página pública de cada vídeo é lida, 4 de cada vez: curtidas, comentários, legenda, data, hora e duração.
+2. A página pública de cada vídeo é lida, 4 de cada vez: curtidas, comentários, legenda, data e duração.
 3. Quando o Kwai devolve uma página genérica, o app tenta de novo até 3 vezes. O que não vier fica marcado como inválido.
 """)
         titulo("Como ler")

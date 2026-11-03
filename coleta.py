@@ -2,7 +2,7 @@
 
 1) Selenium abre o perfil e rola a grade para pegar os IDs dos vídeos.
 2) `requests` abre a página de cada vídeo (4 ao mesmo tempo) e extrai
-   curtidas, comentários, legenda, data/hora e duração.
+   curtidas, comentários, legenda, data e duração.
 """
 from __future__ import annotations
 
@@ -307,7 +307,7 @@ def metricas_da_pagina(link: str, video_id: str) -> dict:
                 out[campo] = int(m.group(1))
                 break
 
-    out["data_publicacao"], out["hora_publicacao"], out["fonte_data"] = _data_publicacao(html, video_id)
+    out["data_publicacao"], _, out["fonte_data"] = _data_publicacao(html, video_id)   # só a data; o horário não é usado
     out["duracao_segundos"] = _duracao_iso(html) or _duracao_perto_do_id(html, video_id)
     return out
 
